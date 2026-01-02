@@ -215,18 +215,43 @@ if datasets:
         from graphviz import Digraph
 
         graph = Digraph()
-        graph.attr(rankdir="LR", bgcolor="#0e1117")
+
+        # Global graph styling (dark-mode friendly)
+        graph.attr(
+            rankdir="LR",
+            bgcolor="#0E1117",
+            fontcolor="white"
+        )
+
+        # Node style
+        graph.attr(
+            'node',
+            style="filled",
+            shape="box",
+            color="#00FFFF",
+            fillcolor="#012B39",
+            fontcolor="white",
+            penwidth="2",
+            fontsize="16",
+            margin="0.3"
+        )
+
+        # Edge style
+        graph.attr(
+            'edge',
+            color="white",
+            penwidth="2"
+        )
 
         # Detect likely primary keys
         pk_keywords = ["id", "key", "code"]
-
         table_pk_map = {}
 
         for name, df in datasets.items():
 
             cols = list(df.columns)
 
-            # Find candidate primary key
+            # Detect primary key candidate
             pk = None
             for c in cols:
                 lc = c.lower()
@@ -236,9 +261,9 @@ if datasets:
 
             table_pk_map[name] = pk
 
-            # Draw table node
+            # Node label (pretty display)
             label = f"<<B>{name}</B><BR ALIGN='LEFT'/>" + "<BR/>".join(cols) + ">"
-            graph.node(name, label=label, shape="box", color="cyan")
+            graph.node(name, label=label)
 
         # Detect relationships
         relations_found = False
@@ -253,7 +278,6 @@ if datasets:
                 if pk is None:
                     continue
 
-                # If table1 contains column referencing table2 pk
                 for col in df1.columns:
                     if col.lower() == pk.lower():
                         graph.edge(t1, t2, label=col)
@@ -264,5 +288,7 @@ if datasets:
         else:
             st.info("ℹ No relational links detected — tables appear independent.")
 
+
 else:
     st.info("📂 Upload datasets to begin.")
+
