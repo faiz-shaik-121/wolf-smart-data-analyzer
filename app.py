@@ -30,17 +30,31 @@ classifies tables, and generates a Data Dictionary.
 # ------------------------------------------------------------
 def load_csv_safely(uploaded_file):
 
-    raw_data = uploaded_file.read()
+    encodings_to_try = [
+        "utf-8",
+        "utf-8-sig",
+        "cp1252",
+        "latin1",
+        "iso-8859-1",
+        "iso-8859-15"
+    ]
 
-    detected = chardet.detect(raw_data)
-    encoding = detected["encoding"] or "latin1"
+    for enc in encodings_to_try:
+        try:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding=enc, engine="python")
+        except Exception:
+            continue
 
-    try:
-        text = raw_data.decode(encoding)
-    except Exception:
-        text = raw_data.decode(encoding, errors="ignore")
+    # last fallback — ignore bad bytes
+    uploaded_file.seek(0)
+    return pd.read_csv(
+        uploaded_file,
+        encoding="latin1",
+        engine="python",
+        on_bad_lines="skip"
+    )
 
-    return pd.read_csv(StringIO(text))
 
 
 # ------------------------------------------------------------
@@ -186,3 +200,4 @@ if datasets:
 
 else:
     st.info("📂 Upload datasets to begin.")
+
