@@ -1,178 +1,188 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import StringIO
+import json
+import chardet
 
+from io import StringIO
+from pathlib import Path
+
+# ------------------------------------------------------------
+# PAGE CONFIG
+# ------------------------------------------------------------
 st.set_page_config(
     page_title="Wolf Smart Data Analyzer",
-    layout="wide"
+    layout="wide",
 )
 
 st.title("🐺 Wolf Smart Data Analyzer")
+
 st.write(
     """
 Upload one or more datasets.  
-This tool cleans data, analyzes schema quality, detects relationships,
+This tool cleans data, analyzes schema quality, detects relationships, 
 classifies tables, and generates a Data Dictionary.
 """
 )
 
-# ================================
-# FILE LOADER WITH SMART ENCODING
-# ================================
-def load_csv_safely(file):
-    encodings = ["utf-8", "latin1", "iso-8859-1", "cp1252"]
+# ------------------------------------------------------------
+# UNIVERSAL SAFE CSV LOADER (Mobile + Govt Data + Excel Exports)
+# ------------------------------------------------------------
+def load_csv_safely(uploaded_file):
 
-    for enc in encodings:
-        try:
-            return pd.read_csv(file, encoding=enc)
-        except UnicodeDecodeError:
-            continue
+    raw_data = uploaded_file.read()
 
-    # Final fallback (prevents crash)
-    return pd.read_csv(file, encoding="latin1", errors="ignore")
+    detected = chardet.detect(raw_data)
+    encoding = detected["encoding"] or "latin1"
+
+    try:
+        text = raw_data.decode(encoding)
+    except Exception:
+        text = raw_data.decode(encoding, errors="ignore")
+
+    return pd.read_csv(StringIO(text))
 
 
-def load_file(file):
-    filename = file.name.lower()
+# ------------------------------------------------------------
+# JSON LOADER
+# ------------------------------------------------------------
+def load_json_safely(uploaded_file):
+    raw = uploaded_file.read().decode("utf-8", errors="ignore")
+    data = json.loads(raw)
+    return pd.json_normalize(data)
 
-    if filename.endswith(".csv"):
-        return load_csv_safely(file)
 
-    elif filename.endswith(".xlsx") or filename.endswith(".xls"):
-        return pd.read_excel(file)
+# ------------------------------------------------------------
+# DATASET LOADER ROUTER
+# ------------------------------------------------------------
+def load_dataset(file):
 
-    elif filename.endswith(".json"):
-        return pd.read_json(file)
+    suffix = Path(file.name).suffix.lower()
 
-    else:
-        st.error(f"Unsupported file format: {filename}")
+    try:
+        if suffix == ".csv":
+            return load_csv_safely(file)
+
+        elif suffix in (".xls", ".xlsx"):
+            return pd.read_excel(file)
+
+        elif suffix == ".json":
+            return load_json_safely(file)
+
+        else:
+            st.error(f"❌ Unsupported file type: {suffix}")
+            return None
+
+    except Exception as e:
+        st.error(f"❌ Failed to load {file.name}\n\n{e}")
         return None
 
 
-# ================================
-# FILE UPLOAD SECTION
-# ================================
+# ------------------------------------------------------------
+# FILE UPLOADER UI
+# ------------------------------------------------------------
 uploaded_files = st.file_uploader(
     "Upload datasets (CSV / Excel / JSON)",
-    accept_multiple_files=True,
-    type=["csv", "xlsx", "xls", "json"]
+    type=["csv", "xls", "xlsx", "json"],
+    accept_multiple_files=True
 )
 
 datasets = {}
 
 if uploaded_files:
-    st.success(f"Uploaded {len(uploaded_files)} file(s).")
-
     for file in uploaded_files:
-        try:
-            df = load_file(file)
+        df = load_dataset(file)
 
-            if df is not None and not df.empty:
-                datasets[file.name] = df
-                st.write(f"✅ Loaded `{file.name}` — {df.shape[0]} rows × {df.shape[1]} columns")
-            else:
-                st.warning(f"⚠ `{file.name}` is empty or unreadable")
+        if df is None:
+            continue
 
-        except Exception as e:
-            st.error(f"❌ Could not read {file.name} — {e}")
+        datasets[file.name] = df
+
+    st.success("✅ Files loaded successfully!")
 
 
-st.divider()
-
-
-# ==========================================
-# PROCESS EACH DATASET
-# ==========================================
+# ------------------------------------------------------------
+# PROCESS DATASETS
+# ------------------------------------------------------------
 if datasets:
 
-    for name, df in datasets.items():
-        st.subheader(f"📂 Dataset: {name}")
+    tab_overview, tab_schema, tab_dictionary = st.tabs(
+        ["📌 Overview", "📊 Schema Quality", "📘 Data Dictionary"]
+    )
 
-        with st.expander("🔎 Preview (Top 50 Rows)", expanded=False):
-            st.dataframe(df.head(50), use_container_width=True)
+    # --------------------------------------------------------
+    # 1️⃣ OVERVIEW
+    # --------------------------------------------------------
+    with tab_overview:
+        st.subheader("📌 Dataset Overview")
 
-        # =============================
-        # AUTO DATA CLEANING
-        # =============================
-        st.subheader("🧹 Data Cleaning Report")
+        for name, df in datasets.items():
 
-        null_count = df.isna().sum().sum()
-        dup_count = df.duplicated().sum()
+            st.markdown(f"### 📁 {name}")
 
-        col_nulls = df.isna().sum()
+            st.write("Shape:", df.shape)
 
-        st.write("**Null Summary**")
-        st.write(col_nulls)
+            st.dataframe(df.head())
 
-        st.info(
-            f"Total Missing Values: **{null_count}**  \n"
-            f"Duplicate Rows: **{dup_count}**"
-        )
+            st.write("---")
 
-        # Remove duplicates automatically
-        if dup_count > 0:
-            df = df.drop_duplicates()
-            st.success("Removed duplicate rows.")
+    # --------------------------------------------------------
+    # 2️⃣ SCHEMA QUALITY
+    # --------------------------------------------------------
+    with tab_schema:
+        st.subheader("📊 Schema & Data Health")
 
-        # =============================
-        # COLUMN TYPE ANALYSIS
-        # =============================
-        st.subheader("📑 Schema Overview")
+        for name, df in datasets.items():
 
-        schema = pd.DataFrame({
-            "Column Name": df.columns,
-            "Data Type": df.dtypes.astype(str),
-            "Missing Values": df.isna().sum(),
-            "Unique Values": df.nunique()
-        })
+            st.markdown(f"### 🧩 {name}")
 
-        st.dataframe(schema, use_container_width=True)
+            summary = pd.DataFrame({
+                "Column": df.columns,
+                "Data Type": df.dtypes.astype(str),
+                "Null Count": df.isna().sum(),
+                "Null %": (df.isna().mean() * 100).round(2),
+                "Unique Values": df.nunique()
+            })
 
-        # =============================
-        # TABLE CLASSIFICATION
-        # =============================
-        st.subheader("📂 Table Type Classification")
+            st.dataframe(summary, use_container_width=True)
 
-        table_type = "Generic Table"
+            st.write("---")
 
-        col_names = ",".join(df.columns).lower()
-
-        if "date" in col_names or "time" in col_names:
-            table_type = "Time-Series Data"
-        elif "id" in col_names:
-            table_type = "Entity Table"
-        elif "amount" in col_names or "price" in col_names:
-            table_type = "Financial Table"
-        elif "name" in col_names or "email" in col_names:
-            table_type = "Customer / People Table"
-
-        st.success(f"Detected Table Type → **{table_type}**")
-
-        # =============================
-        # DATA DICTIONARY
-        # =============================
+    # --------------------------------------------------------
+    # 3️⃣ DATA DICTIONARY
+    # --------------------------------------------------------
+    with tab_dictionary:
         st.subheader("📘 Auto-Generated Data Dictionary")
 
-        dictionary = pd.DataFrame({
-            "Column": df.columns,
-            "Description": ["(Auto-generated — user may edit)" for _ in df.columns],
-            "Datatype": df.dtypes.astype(str),
-            "Example Value": [str(df[col].dropna().iloc[0]) if df[col].notna().any() else "" for col in df.columns]
-        })
+        for name, df in datasets.items():
 
-        st.dataframe(dictionary, use_container_width=True)
+            st.markdown(f"### 📁 {name}")
 
-        csv_export = dictionary.to_csv(index=False).encode("utf-8")
+            dictionary = []
 
-        st.download_button(
-            "⬇ Download Data Dictionary (CSV)",
-            csv_export,
-            file_name=f"{name}_data_dictionary.csv",
-            mime="text/csv"
-        )
+            for col in df.columns:
 
-        st.divider()
+                column_info = {
+                    "Column": col,
+                    "Type": str(df[col].dtype),
+                    "Example Value": str(df[col].dropna().iloc[0]) if df[col].notna().any() else None,
+                    "Null %": round(df[col].isna().mean() * 100, 2)
+                }
+
+                dictionary.append(column_info)
+
+            dict_df = pd.DataFrame(dictionary)
+
+            st.dataframe(dict_df, use_container_width=True)
+
+            st.download_button(
+                label="⬇ Download Data Dictionary",
+                data=dict_df.to_csv(index=False),
+                file_name=f"{name}_data_dictionary.csv",
+                mime="text/csv",
+            )
+
+            st.write("---")
 
 else:
-    st.info("Upload files to begin processing.")
+    st.info("📂 Upload datasets to begin.")
