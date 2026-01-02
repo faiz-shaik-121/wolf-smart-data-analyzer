@@ -135,8 +135,8 @@ if uploaded_files:
 # ------------------------------------------------------------
 if datasets:
 
-    tab_overview, tab_schema, tab_dictionary = st.tabs(
-        ["📌 Overview", "📊 Schema Quality", "📘 Data Dictionary"]
+    tab_overview, tab_schema, tab_dictionary, tab_model = st.tabs(
+        ["📌 Overview", "📊 Schema Quality", "📘 Data Dictionary", "🧩 Model View Diagram"]
     )
 
     # --------------------------------------------------------
@@ -148,11 +148,8 @@ if datasets:
         for name, df in datasets.items():
 
             st.markdown(f"### 📁 {name}")
-
             st.write("Shape:", df.shape)
-
             st.dataframe(df.head())
-
             st.write("---")
 
     # --------------------------------------------------------
@@ -174,7 +171,6 @@ if datasets:
             })
 
             st.dataframe(summary, use_container_width=True)
-
             st.write("---")
 
     # --------------------------------------------------------
@@ -190,30 +186,83 @@ if datasets:
             dictionary = []
 
             for col in df.columns:
-
-                column_info = {
+                dictionary.append({
                     "Column": col,
                     "Type": str(df[col].dtype),
                     "Example Value": str(df[col].dropna().iloc[0]) if df[col].notna().any() else None,
                     "Null %": round(df[col].isna().mean() * 100, 2)
-                }
-
-                dictionary.append(column_info)
+                })
 
             dict_df = pd.DataFrame(dictionary)
 
             st.dataframe(dict_df, use_container_width=True)
 
             st.download_button(
-                label="⬇ Download Data Dictionary",
-                data=dict_df.to_csv(index=False),
+                "⬇ Download Data Dictionary",
+                dict_df.to_csv(index=False),
                 file_name=f"{name}_data_dictionary.csv",
-                mime="text/csv",
+                mime="text/csv"
             )
 
             st.write("---")
 
+    # --------------------------------------------------------
+    # 4️⃣ MODEL VIEW — RELATIONSHIP DIAGRAM
+    # --------------------------------------------------------
+    with tab_model:
+        st.subheader("🧩 Table Relationship Model View")
+
+        from graphviz import Digraph
+
+        graph = Digraph()
+        graph.attr(rankdir="LR", bgcolor="#0e1117")
+
+        # Detect likely primary keys
+        pk_keywords = ["id", "key", "code"]
+
+        table_pk_map = {}
+
+        for name, df in datasets.items():
+
+            cols = list(df.columns)
+
+            # Find candidate primary key
+            pk = None
+            for c in cols:
+                lc = c.lower()
+                if any(k in lc for k in pk_keywords) and df[c].is_unique:
+                    pk = c
+                    break
+
+            table_pk_map[name] = pk
+
+            # Draw table node
+            label = f"<<B>{name}</B><BR ALIGN='LEFT'/>" + "<BR/>".join(cols) + ">"
+            graph.node(name, label=label, shape="box", color="cyan")
+
+        # Detect relationships
+        relations_found = False
+
+        for t1, df1 in datasets.items():
+            for t2, df2 in datasets.items():
+
+                if t1 == t2:
+                    continue
+
+                pk = table_pk_map[t2]
+                if pk is None:
+                    continue
+
+                # If table1 contains column referencing table2 pk
+                for col in df1.columns:
+                    if col.lower() == pk.lower():
+                        graph.edge(t1, t2, label=col)
+                        relations_found = True
+
+        if relations_found:
+            st.graphviz_chart(graph, use_container_width=True)
+        else:
+            st.info("ℹ No relational links detected — tables appear independent.")
+
 else:
     st.info("📂 Upload datasets to begin.")
-
-
